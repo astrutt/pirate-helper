@@ -2,7 +2,7 @@
 -- HexChat Lua script for game automation, alarms, and timers.
 -- Place in your HexChat addons directory (e.g., ~/.config/hexchat/addons/)
 
-hexchat.register("Pirate Helper", "1.5", "Channel-specific alarms and timers for game automation")
+hexchat.register("Pirate Helper", "1.51", "Channel-specific alarms and timers for game automation")
 
 local tasks = {}
 local task_id_counter = 1
@@ -14,6 +14,25 @@ local function parse_time(time_str)
         return tonumber(h), tonumber(m), tonumber(s)
     end
     return nil, nil, nil
+end
+
+-- Helper: Determine if the current context is a Server window
+local function is_server_window(chan)
+    local t = hexchat.get_info("type")
+    -- Some Lua plugin forks expose "type" (1 = Server)
+    if t and tostring(t) == "1" then 
+        return true 
+    end
+    
+    -- Bulletproof fallback for standard HexChat Lua:
+    -- Server tabs have a channel name equal to the network name, server name, or it is blank.
+    local n = hexchat.get_info("network") or ""
+    local s = hexchat.get_info("server") or ""
+    
+    if chan == n or chan == s or chan == "" then
+        return true
+    end
+    return false
 end
 
 -- /palarm <HH:MM:SS>
@@ -45,30 +64,24 @@ local function cmd_palarm(word, word_eol)
     local id = task_id_counter
     task_id_counter = task_id_counter + 1
 
-    -- Declare hook_ref first so the closure can capture it and unhook itself
     local hook_ref 
     
     local function alarm_cb(userdata)
         local ctx = hexchat.find_context(server, channel)
         local my_nick = hexchat.get_info("nick") or "Pirate"
         
-        -- Include the nick to satisfy visual mention
         local msg = string.format("\002\00304[ALARM]\003\002 %s: %s time has arrived!", my_nick, word[2])
         
         if ctx then
-            -- Emitting a highlight event forces HexChat's GUI to process it as a mention
             ctx:emit_print("Channel Msg Hilight", "PirateHelper", msg)
         else
-            -- Fallback if the channel was closed
             hexchat.emit_print("Channel Msg Hilight", "PirateHelper", msg .. " (Orig: " .. channel .. ")")
         end
         
-        -- macOS specific sound trigger (non-blocking). MacPorts GTK bell is notoriously unreliable.
         os.execute("afplay /System/Library/Sounds/Glass.aiff 2>/dev/null &")
         
-        -- Clean up
         if tasks[id] then tasks[id] = nil end
-        if hook_ref then hexchat.unhook(hook_ref) end -- Force unhook
+        if hook_ref then hexchat.unhook(hook_ref) end 
         
         return hexchat.UNHOOK or 0
     end
@@ -103,15 +116,13 @@ local function cmd_ptimer(word, word_eol)
     local num = 1
     local last_word = word[#word]
     
-    -- Check if the last word is a number (the repetition counter)
     if #word > 3 and tonumber(last_word) then
         num = tonumber(last_word)
-        -- Extract the message without the trailing number
         local extracted = string.match(word_eol[3], "^(.*)%s+%d+$")
         if extracted and extracted ~= "" then
             msg_str = extracted
         else
-            num = 1 -- Fallback if match fails
+            num = 1 
         end
     end
 
@@ -121,8 +132,6 @@ local function cmd_ptimer(word, word_eol)
     task_id_counter = task_id_counter + 1
 
     local runs_left = num
-    
-    -- Declare hook_ref first so the closure can capture it and unhook itself
     local hook_ref 
 
     local function timer_cb(userdata)
@@ -141,7 +150,6 @@ local function cmd_ptimer(word, word_eol)
             end
             return hexchat.KEEP_HOOK or 1
         else
-            -- Timer is finished, force unhook explicitly 
             if tasks[id] then tasks[id] = nil end
             if hook_ref then hexchat.unhook(hook_ref) end
             return hexchat.UNHOOK or 0
@@ -157,8 +165,8 @@ end
 
 -- /plist
 local function cmd_plist(word, word_eol)
-    local current_chan = hexchat.get_info("channel")
-    local is_server_win = (hexchat.get_info("type") == 1)
+    local current_chan = hexchat.get_info("channel") or ""
+    local is_server_win = is_server_window(current_chan)
     
     hexchat.print("\002--- Active Pirate Alarms & Timers ---\002")
     local count = 0
@@ -198,8 +206,8 @@ local function cmd_pdel(word, word_eol)
         return hexchat.EAT_ALL
     end
     
-    local current_chan = hexchat.get_info("channel")
-    local is_server_win = (hexchat.get_info("type") == 1)
+    local current_chan = hexchat.get_info("channel") or ""
+    local is_server_win = is_server_window(current_chan)
     
     if not is_server_win and tasks[id].channel ~= current_chan then
         hexchat.print("Error: Cannot delete task from another channel. Switch to " .. tasks[id].channel .. " or the Server window.")
@@ -214,8 +222,8 @@ end
 
 -- /pclear
 local function cmd_pclear(word, word_eol)
-    local current_chan = hexchat.get_info("channel")
-    local is_server_win = (hexchat.get_info("type") == 1)
+    local current_chan = hexchat.get_info("channel") or ""
+    local is_server_win = is_server_window(current_chan)
     local count = 0
     
     for id, task in pairs(tasks) do
@@ -250,7 +258,7 @@ end
 
 -- /pabout
 local function cmd_pabout(word, word_eol)
-    hexchat.print("\002Pirate Helper v1.5 (Lua)\002")
+    hexchat.print("\002Pirate Helper v1.51 (Lua)\002")
     hexchat.print("Automates game tasks with channel-specific timers and absolute alarms.")
     return hexchat.EAT_ALL
 end
@@ -265,4 +273,4 @@ hexchat.hook_command("pclear", cmd_pclear, "Usage: /pclear")
 hexchat.hook_command("phelp", cmd_phelp, "Usage: /phelp")
 hexchat.hook_command("pabout", cmd_pabout, "Usage: /pabout")
 
-hexchat.print("\002Pirate Helper v1.5\002 loaded successfully! Type \002/phelp\002 for commands.")
+hexchat.print("\002Pirate Helper v1.51\002 loaded successfully! Type \002/phelp\002 for commands.")
