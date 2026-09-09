@@ -12,4 +12,5 @@
  /pabout - Displays about and version information
  ------------------------------
 
-
+ Pirate Helper v1.51 (Lua)
+ Automates game tasks with channel-specific timers and absolute alarms.
