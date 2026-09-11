@@ -2,7 +2,7 @@
 -- HexChat Lua script for game automation, alarms, and timers.
 -- Place in your HexChat addons directory (e.g., ~/.config/hexchat/addons/)
 
-hexchat.register("Pirate Helper", "1.51", "Channel-specific alarms and timers for game automation")
+hexchat.register("Pirate Helper", "1.52", "Channel-specific alarms and timers for game automation")
 
 local tasks = {}
 local task_id_counter = 1
@@ -16,16 +16,22 @@ local function parse_time(time_str)
     return nil, nil, nil
 end
 
+-- Helper: Format seconds remaining into HH:MM:SS
+local function format_remaining(seconds)
+    if seconds < 0 then return "00:00:00" end
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = seconds % 60
+    return string.format("%02d:%02d:%02d", h, m, s)
+end
+
 -- Helper: Determine if the current context is a Server window
 local function is_server_window(chan)
     local t = hexchat.get_info("type")
-    -- Some Lua plugin forks expose "type" (1 = Server)
     if t and tostring(t) == "1" then 
         return true 
     end
     
-    -- Bulletproof fallback for standard HexChat Lua:
-    -- Server tabs have a channel name equal to the network name, server name, or it is blank.
     local n = hexchat.get_info("network") or ""
     local s = hexchat.get_info("server") or ""
     
@@ -54,10 +60,12 @@ local function cmd_palarm(word, word_eol)
     target.min = m
     target.sec = s
 
-    local diff = os.difftime(os.time(target), os.time(now))
-    if diff <= 0 then
-        diff = diff + 86400 -- If time has passed today, set for tomorrow
+    local target_time = os.time(target)
+    if target_time <= os.time() then
+        target_time = target_time + 86400 -- If time has passed today, set for tomorrow
     end
+    
+    local diff = target_time - os.time()
 
     local server = hexchat.get_info("server") or ""
     local channel = hexchat.get_info("channel") or ""
@@ -87,7 +95,7 @@ local function cmd_palarm(word, word_eol)
     end
 
     hook_ref = hexchat.hook_timer(diff * 1000, alarm_cb)
-    tasks[id] = { id = id, type = "alarm", time_str = word[2], server = server, channel = channel, hook = hook_ref }
+    tasks[id] = { id = id, type = "alarm", time_str = word[2], target_time = target_time, server = server, channel = channel, hook = hook_ref }
 
     hexchat.print(string.format("Pirate Helper: Alarm [\002%d\002] set for %s in %s.", id, word[2], channel))
     return hexchat.EAT_ALL
@@ -106,8 +114,8 @@ local function cmd_ptimer(word, word_eol)
         return hexchat.EAT_ALL
     end
 
-    local duration_ms = (h * 3600 + m * 60 + s) * 1000
-    if duration_ms == 0 then
+    local duration_sec = (h * 3600 + m * 60 + s)
+    if duration_sec == 0 then
         hexchat.print("Timer duration must be greater than 00:00:00.")
         return hexchat.EAT_ALL
     end
@@ -147,6 +155,8 @@ local function cmd_ptimer(word, word_eol)
         if runs_left > 0 then
             if tasks[id] then
                 tasks[id].runs = runs_left
+                -- Reset the end time for the next iteration
+                tasks[id].end_time = os.time() + tasks[id].duration_sec
             end
             return hexchat.KEEP_HOOK or 1
         else
@@ -156,8 +166,10 @@ local function cmd_ptimer(word, word_eol)
         end
     end
 
-    hook_ref = hexchat.hook_timer(duration_ms, timer_cb)
-    tasks[id] = { id = id, type = "timer", duration_str = word[2], msg = msg_str, runs = runs_left, server = server, channel = channel, hook = hook_ref }
+    hook_ref = hexchat.hook_timer(duration_sec * 1000, timer_cb)
+    
+    -- Store duration_sec and initial end_time for the /plist display
+    tasks[id] = { id = id, type = "timer", duration_str = word[2], duration_sec = duration_sec, end_time = os.time() + duration_sec, msg = msg_str, runs = runs_left, server = server, channel = channel, hook = hook_ref }
     
     hexchat.print(string.format("Pirate Helper: Timer [\002%d\002] set for %s. Will send message \002%d\002 time(s) in %s.", id, word[2], num, channel))
     return hexchat.EAT_ALL
@@ -174,9 +186,11 @@ local function cmd_plist(word, word_eol)
     for id, task in pairs(tasks) do
         if is_server_win or task.channel == current_chan then
             if task.type == "alarm" then
-                hexchat.print(string.format("[\002%d\002] ALARM @ %s (Channel: %s)", id, task.time_str, task.channel))
+                local remaining = task.target_time - os.time()
+                hexchat.print(string.format("[\002%d\002] ALARM @ %s (In: %s) (Channel: %s)", id, task.time_str, format_remaining(remaining), task.channel))
             elseif task.type == "timer" then
-                hexchat.print(string.format("[\002%d\002] TIMER repeating every %s | Msg: %s | Runs left: %d (Channel: %s)", id, task.duration_str, task.msg, task.runs, task.channel))
+                local remaining = task.end_time - os.time()
+                hexchat.print(string.format("[\002%d\002] TIMER every %s (Next: %s) | Msg: %s | Runs left: %d (Channel: %s)", id, task.duration_str, format_remaining(remaining), task.msg, task.runs, task.channel))
             end
             count = count + 1
         end
@@ -258,7 +272,7 @@ end
 
 -- /pabout
 local function cmd_pabout(word, word_eol)
-    hexchat.print("\002Pirate Helper v1.51 (Lua)\002")
+    hexchat.print("\002Pirate Helper v1.52 (Lua)\002")
     hexchat.print("Automates game tasks with channel-specific timers and absolute alarms.")
     return hexchat.EAT_ALL
 end
@@ -273,4 +287,5 @@ hexchat.hook_command("pclear", cmd_pclear, "Usage: /pclear")
 hexchat.hook_command("phelp", cmd_phelp, "Usage: /phelp")
 hexchat.hook_command("pabout", cmd_pabout, "Usage: /pabout")
 
-hexchat.print("\002Pirate Helper v1.51\002 loaded successfully! Type \002/phelp\002 for commands.")
+hexchat.print("\002Pirate Helper v1.52\002 loaded successfully! Type \002/phelp\002 for commands.")
+
